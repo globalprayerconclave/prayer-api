@@ -4,7 +4,33 @@ import mongoose from "mongoose";
 import "dotenv/config";
 
 const app = express();
-app.use(cors());
+import cors from "cors";
+
+const allowedOrigins = [
+"https://globalharvest.netlify.app", // your Netlify site
+"http://localhost:5500", // local dev (VS Code Live Server)
+"http://127.0.0.1:5500" // local dev (alternate)
+];
+
+app.use(
+cors({
+origin: (origin, cb) => {
+// Allow server-to-server requests (no Origin) and the allowed sites
+if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+return cb(new Error("Not allowed by CORS"));
+},
+methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+allowedHeaders: ["Content-Type", "Authorization"]
+})
+);
+
+// Optional: clearer error if blocked by CORS
+app.use((err, req, res, next) => {
+if (err && err.message === "Not allowed by CORS") {
+return res.status(403).json({ ok: false, error: "CORS: Origin not allowed" });
+}
+next(err);
+});
 app.use(express.json());
 
 // Debug routes
