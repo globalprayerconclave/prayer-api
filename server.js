@@ -15,7 +15,7 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Allow server-to-server/no-origin (e.g., curl, Render health) and allowed sites
+      // Allow server-to-server/no-origin (e.g., curl, direct browser URL) and allowed sites
       if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
       return cb(new Error("Not allowed by CORS"));
     },
@@ -98,6 +98,78 @@ app.get("/api/items", async (req, res) => {
   try {
     const items = await PrayerItem.find({}).lean();
     res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// One-time seed route: adds a sample country + a sample topic (idempotent)
+app.get("/api/dev/seed", async (req, res) => {
+  try {
+    const samples = [
+      {
+        type: "country",
+        name: "Kenya",
+        flag: "https://flagcdn.com/w320/ke.png",
+        location: "East Africa",
+        capital: "Nairobi",
+        population: "55 million",
+        headOfState: "President William Ruto",
+        officialLanguage: "Swahili, English",
+        languages: "60+",
+        peopleGroups: "110",
+        leastReachedPeopleGroups: "—",
+        largestReligion: "Christianity",
+        christianPopulation: "85%",
+        dayOfWeek: "Wednesday",
+        startTime: "07:30",
+        durationMinutes: 45,
+        region: "East Africa",
+        prayerPoints: [
+          { category: "Current Concerns", points: ["Drought resilience", "Youth employment"] },
+          { category: "Revival and Awakening", points: ["Church unity", "Bold witness"] }
+        ]
+      },
+      {
+        type: "topic",
+        name: "Global Church Unity",
+        icon: "✝️",
+        description: "Praying for unity among Christian denominations worldwide",
+        dayOfWeek: "Saturday",
+        startTime: "23:30",
+        durationMinutes: 60,
+        region: "Global",
+        prayerPoints: [
+          {
+            category: "Biblical Foundation",
+            points: [
+              "Pray for the fulfillment of John 17:21",
+              "Break down denominational barriers"
+            ]
+          },
+          {
+            category: "Practical Steps",
+            points: [
+              "Joint worship and prayer gatherings",
+              "Share resources and encourage reconciliation"
+            ]
+          }
+        ]
+      }
+    ];
+
+    let created = 0;
+    for (const doc of samples) {
+      const result = await PrayerItem.updateOne(
+        { name: doc.name },
+        { $setOnInsert: doc },
+        { upsert: true }
+      );
+      // If newly inserted, some drivers expose upsertedId
+      if (result.upsertedId) created += 1;
+    }
+
+    res.json({ ok: true, message: `Seed complete. Inserted new: ${created}` });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
