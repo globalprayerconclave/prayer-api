@@ -165,11 +165,200 @@ app.get("/api/dev/seed", async (req, res) => {
         { $setOnInsert: doc },
         { upsert: true }
       );
-      // If newly inserted, some drivers expose upsertedId
       if (result.upsertedId) created += 1;
     }
 
     res.json({ ok: true, message: `Seed complete. Inserted new: ${created}` });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ------------------------------
+// Immediate Prayer Needs (Urgent Requests)
+// ------------------------------
+const LinkSchema = new mongoose.Schema(
+  {
+    text: { type: String, required: true },
+    url:  { type: String, required: true }
+  },
+  { _id: false }
+);
+
+const UrgentRequestSchema = new mongoose.Schema(
+  {
+    title:       { type: String, required: true, unique: true, trim: true },
+    description: { type: String, required: true },
+    prayerPoints:{ type: [String], default: [] },
+    links:       { type: [LinkSchema], default: [] },
+    region:      { type: String },
+    active:      { type: Boolean, default: true },
+    priority:    { type: Number, default: 0 } // higher shows first
+  },
+  { timestamps: true }
+);
+
+const UrgentRequest = mongoose.model("UrgentRequest", UrgentRequestSchema);
+
+// GET /api/urgent?active=true|false|all&q=search&limit=20
+app.get("/api/urgent", async (req, res) => {
+  try {
+    const { active = "true", q = "", limit = "20" } = req.query;
+
+    const query = {};
+    if (active !== "all") {
+      query.active = active === "true";
+    }
+    if (q && String(q).trim().length > 0) {
+      query.$or = [
+        { title:       { $regex: q, $options: "i" } },
+        { description: { $regex: q, $options: "i" } }
+      ];
+    }
+
+    const lim = Math.min(parseInt(limit || "20", 10) || 20, 100);
+
+    const items = await UrgentRequest
+      .find(query)
+      .sort({ priority: -1, createdAt: -1 })
+      .limit(lim)
+      .lean();
+
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /api/urgent/:id
+app.get("/api/urgent/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id" });
+    }
+    const doc = await UrgentRequest.findById(id).lean();
+    if (!doc) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, item: doc });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /api/urgent
+app.post("/api/urgent", async (req, res) => {
+  try {
+    const { title, description } = req.body || {};
+    if (!title || !description) {
+      return res.status(400).json({ ok: false, error: "title and description are required" });
+    }
+    const payload = {
+      title,
+      description,
+      prayerPoints: Array.isArray(req.body.prayerPoints) ? req.body.prayerPoints : [],
+      links: Array.isArray(req.body.links) ? req.body.links : [],
+      region: req.body.region || "",
+      active: typeof req.body.active === "boolean" ? req.body.active : true,
+      priority: typeof req.body.priority === "number" ? req.body.priority : 0
+    };
+    const doc = await UrgentRequest.create(payload);
+    res.status(201).json({ ok: true, id: doc._id });
+  } catch (e) {
+    if (e.code === 11000) {
+      return res.status(409).json({ ok: false, error: "An urgent request with this title already exists" });
+    }
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// PATCH /api/urgent/:id
+app.patch("/api/urgent/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id" });
+    }
+    const allowed = ["title","description","prayerPoints","links","region","active","priority"];
+    const update = {};
+    for (const key of allowed) {
+      if (req.body[key] !== undefined) update[key] = req.body[key];
+    }
+    const doc = await UrgentRequest.findByIdAndUpdate(id, { $set: update }, { new: true });
+    if (!doc) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, item: doc });
+  } catch (e) {
+    if (e.code === 11000) {
+      return res.status(409).json({ ok: false, error: "An urgent request with this title already exists" });
+    }
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// DELETE /api/urgent/:id
+app.delete("/api/urgent/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!mongoose.isValidObjectId(id)) {
+      return res.status(400).json({ ok: false, error: "Invalid id" });
+    }
+    const doc = await UrgentRequest.findByIdAndDelete(id);
+    if (!doc) return res.status(404).json({ ok: false, error: "Not found" });
+    res.json({ ok: true, deleted: id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Optional: seed urgent items (idempotent)
+app.get("/api/dev/urgent-seed", async (req, res) => {
+  try {
+    const samples = [
+      {
+        title: "Earthquake — Afghanistan",
+        description: "A strong earthquake has affected communities. Pray for rescue teams, survivors, and relief efforts.",
+        prayerPoints: [
+          "Safety and effectiveness for rescue teams",
+          "Comfort and healing for the injured and bereaved",
+          "Adequate shelter, food, and medical supplies",
+          "Wisdom for authorities and aid organizations",
+          "Hope and spiritual comfort amidst devastation"
+        ],
+        links: [
+          { text: "Watch: Earthquake Hits Afghanistan", url: "https://www.youtube.com/watch?v=FLriPFyEe4A" }
+        ],
+        region: "South Asia",
+        active: true,
+        priority: 10
+      },
+      {
+        title: "Conflict / Displacement — Myanmar",
+        description: "Rising conflict has displaced families. Pray for peace, protection, and humanitarian access.",
+        prayerPoints: [
+          "Immediate ceasefire and peaceful resolution",
+          "Protection for civilians",
+          "Humanitarian access for those in need",
+          "Wisdom and compassion for leaders",
+          "Reconciliation and healing in communities"
+        ],
+        links: [
+          { text: "Read: Humanitarian Report", url: "https://example.com/conflict-update" }
+        ],
+        region: "Southeast Asia",
+        active: true,
+        priority: 8
+      }
+    ];
+
+    let created = 0;
+    for (const doc of samples) {
+      const result = await UrgentRequest.updateOne(
+        { title: doc.title },
+        { $setOnInsert: doc },
+        { upsert: true }
+      );
+      if (result.upsertedId) created += 1;
+    }
+    res.json({ ok: true, message: `Urgent seed complete. Inserted new: ${created}` });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
